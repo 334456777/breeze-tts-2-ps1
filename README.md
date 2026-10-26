@@ -1,8 +1,6 @@
 # audio.cpp CUDA + Breeze TTS 2 Q8_0
 
-本文件夹是完整的脚本项目，所有安装、模型、运行器、缓存和输出都在当前文件夹内管理。脚本文件名和参数名使用英文，注释、帮助正文、提示和报错使用中文。
-
-只部署 **audio.cpp CUDA + Breeze TTS 2 Q8_0**，支持中文、英文、文字描述音色、参考音频模仿和流式生成。使用 Windows 自带的 PowerShell / .NET，无需 Python、uv、Hugging Face 库、PyTorch 或系统 CUDA Toolkit。
+部署和使用 **audio.cpp CUDA + Breeze TTS 2 Q8_0** 进行文字转语音（Text to Speak）
 
 ## 环境与磁盘空间
 
