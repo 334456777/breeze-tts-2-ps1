@@ -1,0 +1,7 @@
+/.cache/
+/.tmp/
+/downloads/
+/models/
+/runtime/
+/logs/
+/outputs/

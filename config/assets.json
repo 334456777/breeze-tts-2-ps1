@@ -1,0 +1,22 @@
+[
+  {
+    "path": "models/breeze-tts-2-q8_0.gguf",
+    "size": 5079670336,
+    "sha256": "b17b89b1c21107c44e8d556ab0a856d7acd06bdd0c914e68e0e57f6e33f555a3",
+    "url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/462b4cec041e06ffb3d8fcf0d8c655051b1cd9f5/Breeze-TTS-2-GGUF/breeze-tts-2-q8_0.gguf"
+  },
+  {
+    "path": "downloads/audiocpp.zip",
+    "size": 464268606,
+    "sha256": "48852da40790c40f3285bca6c53ff7829b3963080f0e95b6742f868fc1d7c757",
+    "url": "https://github.com/0xShug0/audio.cpp/releases/download/v0.9.2-drama3-base-small/audio-v0.9.2-drama3-base-small-bin-windows-x64-cuda12.4.zip",
+    "extract_to": "runtime/audio.cpp"
+  },
+  {
+    "path": "downloads/audiocpp-cudart.zip",
+    "size": 607273675,
+    "sha256": "4b1186a525c9ac70a4fbd031b47e0dfca2ebaa36cfcb760d5be1a76eb2b12da5",
+    "url": "https://github.com/0xShug0/audio.cpp/releases/download/v0.9.2-drama3-base-small/audio-v0.9.2-drama3-base-small-cudart-windows-x64-cuda12.4.zip",
+    "extract_to": "runtime/cuda"
+  }
+]

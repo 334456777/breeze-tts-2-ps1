@@ -1,0 +1,13 @@
+{
+  "name": "audio.cpp Q8_0",
+  "version": "v0.9.2-drama3-base-small",
+  "backend": "cuda",
+  "device": 0,
+  "threads": 4,
+  "model_id": "breeze",
+  "port": 8088,
+  "listen_address": "127.0.0.1",
+  "exe": "runtime/audio.cpp/audiocpp_server.exe",
+  "cuda_dir": "runtime/cuda",
+  "model": "models/breeze-tts-2-q8_0.gguf"
+}
