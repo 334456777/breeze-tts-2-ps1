@@ -23,7 +23,8 @@ function Show-Usage {
   -p, --play                  生成后直接播放
   -s, --speak                 只朗读，不保留任何文件（自动播放）
   -N, --no_start              服务未运行时不自动启动
-  -x, --stop                  合成结束后停止服务，释放显存
+  -x, --stop                  停止服务、卸载模型释放显存；单独使用只卸载，
+                              与文字一起使用则合成结束后再卸载
   -h, --help                  显示本帮助
 
 示例:
@@ -31,6 +32,7 @@ function Show-Usage {
   tts "只朗读不留文件" -s
   tts article.txt -o D:\audio
   tts "下午好" -i "一位说普通话、语气温暖的成年女性。"
+  tts -x                  卸载模型，释放显存
 '@ | Write-Host
 }
 
@@ -70,9 +72,17 @@ if ($flags.help) { Show-Usage; return }
 
 # 没有位置参数时读取管道输入
 if ($inputs.Count -eq 0 -or ($inputs.Count -eq 1 -and $inputs[0] -eq '-')) {
-    if (-not [Console]::IsInputRedirected) { Show-Usage; return }
-    [Console]::InputEncoding = [Text.Encoding]::UTF8
-    $piped = [Console]::In.ReadToEnd()
+    $piped = $null
+    if ([Console]::IsInputRedirected) {
+        [Console]::InputEncoding = [Text.Encoding]::UTF8
+        $piped = [Console]::In.ReadToEnd()
+    }
+    # 单独使用 --stop（没有要朗读的内容）：只停止服务、卸载模型
+    if ($flags.stop -and [string]::IsNullOrWhiteSpace($piped)) {
+        & "$PSScriptRoot\stop-server.ps1"
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($piped)) { Show-Usage; return }
     $inputs.Clear(); $inputs.Add($piped)
 }
 if ($opt.output_name -and $inputs.Count -gt 1) { throw '--output_name 仅在单个输入时可用。' }
