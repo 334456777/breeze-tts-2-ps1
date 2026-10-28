@@ -22,6 +22,9 @@ function Show-Usage {
   -P, --port N                服务端口，默认读取服务状态
   -p, --play                  生成后直接播放
   -s, --speak                 只朗读，不保留任何文件（自动播放）
+  -S, --stream                流式：边生成边播放，首段音频约 0.1 秒内开口；
+                              需流式模式的服务（服务未运行时自动以流式启动；
+                              若已以离线模式运行，请先 tts -x）。可与 -s 合用
   -N, --no_start              服务未运行时不自动启动
   -x, --stop                  停止服务、卸载模型释放显存；单独使用只卸载，
                               与文字一起使用则合成结束后再卸载
@@ -30,6 +33,7 @@ function Show-Usage {
 示例:
   tts "你好，欢迎使用本地语音合成。" -p
   tts "只朗读不留文件" -s
+  tts "边生成边朗读" -s -S
   tts article.txt -o D:\audio
   tts "下午好" -i "一位说普通话、语气温暖的成年女性。"
   tts -x                  卸载模型，释放显存
@@ -41,11 +45,11 @@ $inputs = [Collections.Generic.List[string]]::new()
 $opt = @{ output_dir='.'; seed=42; max_tokens=1500 }
 $flags = @{}
 $valueOptions = 'output_dir','output_name','instruct','voice_ref','reference_text','seed','max_tokens','port'
-$flagOptions = 'play','speak','no_start','stop','help'
+$flagOptions = 'play','speak','stream','no_start','stop','help'
 # 短参数（区分大小写）
 $shortOptions = [Collections.Generic.Dictionary[string,string]]::new()
 foreach ($pair in 'o=output_dir','n=output_name','i=instruct','v=voice_ref','t=reference_text','e=seed','m=max_tokens',
-                  'P=port','p=play','s=speak','N=no_start','x=stop','h=help') {
+                  'P=port','p=play','s=speak','S=stream','N=no_start','x=stop','h=help') {
     $key, $long = $pair -split '=', 2
     $shortOptions[$key] = $long
 }
@@ -89,6 +93,15 @@ if ($opt.output_name -and $inputs.Count -gt 1) { throw '--output_name 仅在单�
 if ([bool]$opt.voice_ref -ne [bool]$opt.reference_text) { throw '--voice_ref 与 --reference_text 必须同时提供。' }
 
 $root = $PSScriptRoot
+if ($flags.stream) {
+    # 服务模式在启动时确定，已在运行的离线服务不会被隐式重启
+    . "$root\common.ps1"
+    $running = Get-ServerState
+    if ($running -and (Get-VerifiedServerProcess $running) -and $running.mode -ne 'streaming' -and
+        (-not $opt.port -or [int]$opt.port -eq $running.port)) {
+        throw '当前服务是离线模式，无法流式播放。请先运行 tts -x 卸载，再用 --stream 重新启动。'
+    }
+}
 $outDir = [IO.Path]::GetFullPath($opt.output_dir, (Get-Location).ProviderPath)
 if (-not $flags.speak) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
 
@@ -96,6 +109,7 @@ if (-not $flags.speak) { New-Item -ItemType Directory -Force -Path $outDir | Out
 if (-not $flags.no_start) {
     $startArgs = @{}
     if ($opt.port) { $startArgs.Port = [int]$opt.port }
+    if ($flags.stream) { $startArgs.Mode = 'streaming' }
     & "$root\start-server.ps1" @startArgs | Out-Null
 }
 
@@ -106,6 +120,7 @@ foreach ($item in $inputs) {
     $speak = @{ Seed = [int]$opt.seed; MaxTokens = [int]$opt.max_tokens }
     if ($opt.instruct) { $speak.Instructions = $opt.instruct }
     if ($opt.port) { $speak.Port = [int]$opt.port }
+    if ($flags.stream) { $speak.Play = $true }
     if ($opt.voice_ref) {
         $speak.VoiceRef = (Resolve-Path -LiteralPath $opt.voice_ref).Path
         $speak.ReferenceText = $opt.reference_text
@@ -128,10 +143,15 @@ foreach ($item in $inputs) {
     try {
         $info = & "$root\speak.ps1" @speak
         if ($flags.speak) {
-            # 只朗读：直接播放临时文件，随后由 finally 删除
-            Write-Host ("正在朗读（音频 {0:N1} 秒，用时 {1:N1} 秒）" -f $info.'音频秒数', $info.'请求秒数')
-            $player = [Media.SoundPlayer]::new($tmpWav)
-            try { $player.PlaySync() } finally { $player.Dispose() }
+            if ($flags.stream) {
+                # 已在生成过程中播放完毕，临时文件由 finally 删除
+                Write-Host ("已流式朗读（音频 {0:N1} 秒，首段音频 {1:N2} 秒）" -f $info.'音频秒数', $info.'首段音频秒数')
+            } else {
+                # 只朗读：直接播放临时文件，随后由 finally 删除
+                Write-Host ("正在朗读（音频 {0:N1} 秒，用时 {1:N1} 秒）" -f $info.'音频秒数', $info.'请求秒数')
+                $player = [Media.SoundPlayer]::new($tmpWav)
+                try { $player.PlaySync() } finally { $player.Dispose() }
+            }
         } else {
             $dest = Join-Path $outDir "$base.wav"
             Move-Item -LiteralPath $tmpWav -Destination $dest -Force
@@ -142,7 +162,7 @@ foreach ($item in $inputs) {
     if ($flags.speak) { continue }
     Write-Host ("已生成 {0}（音频 {1:N1} 秒，用时 {2:N1} 秒）" -f $dest, $info.'音频秒数', $info.'请求秒数')
 
-    if ($flags.play) {
+    if ($flags.play -and -not $flags.stream) {
         $player = [Media.SoundPlayer]::new($dest)
         try { $player.PlaySync() } finally { $player.Dispose() }
     }

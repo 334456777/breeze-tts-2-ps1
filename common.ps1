@@ -121,6 +121,122 @@ function Write-WaveHeader([IO.Stream]$Stream, [long]$DataBytes) {
     } finally { $writer.Dispose() }
 }
 
+function New-PcmPlayer {
+    # 通过 winmm waveOut 边接收边播放 24 kHz 单声道 16 位 PCM，不依赖第三方库。
+    if (-not ('BreezePcmPlayer' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Threading;
+
+public sealed class BreezePcmPlayer : IDisposable {
+    [StructLayout(LayoutKind.Sequential)]
+    struct WAVEFORMATEX {
+        public ushort wFormatTag; public ushort nChannels;
+        public uint nSamplesPerSec; public uint nAvgBytesPerSec;
+        public ushort nBlockAlign; public ushort wBitsPerSample; public ushort cbSize;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct WAVEHDR {
+        public IntPtr lpData; public uint dwBufferLength; public uint dwBytesRecorded;
+        public IntPtr dwUser; public uint dwFlags; public uint dwLoops;
+        public IntPtr lpNext; public IntPtr reserved;
+    }
+    [DllImport("winmm.dll")] static extern uint waveOutOpen(out IntPtr hwo, uint device, ref WAVEFORMATEX fmt, IntPtr cb, IntPtr inst, uint flags);
+    [DllImport("winmm.dll")] static extern uint waveOutPrepareHeader(IntPtr hwo, IntPtr hdr, uint size);
+    [DllImport("winmm.dll")] static extern uint waveOutUnprepareHeader(IntPtr hwo, IntPtr hdr, uint size);
+    [DllImport("winmm.dll")] static extern uint waveOutWrite(IntPtr hwo, IntPtr hdr, uint size);
+    [DllImport("winmm.dll")] static extern uint waveOutPause(IntPtr hwo);
+    [DllImport("winmm.dll")] static extern uint waveOutRestart(IntPtr hwo);
+    [DllImport("winmm.dll")] static extern uint waveOutReset(IntPtr hwo);
+    [DllImport("winmm.dll")] static extern uint waveOutClose(IntPtr hwo);
+
+    const uint WHDR_DONE = 1;
+    const long PrebufferBytes = 12000; // 约 250 ms，先攒一点再开播，避免开头卡顿
+
+    class Item { public IntPtr Hdr; public IntPtr Data; }
+
+    readonly int hdrSize = Marshal.SizeOf(typeof(WAVEHDR));
+    readonly int flagsOffset = (int)Marshal.OffsetOf(typeof(WAVEHDR), "dwFlags");
+    readonly List<Item> queue = new List<Item>();
+    IntPtr dev;
+    bool paused, hasCarry, disposed;
+    byte carry;
+    long buffered, total;
+
+    public BreezePcmPlayer() {
+        WAVEFORMATEX fmt = new WAVEFORMATEX();
+        fmt.wFormatTag = 1; fmt.nChannels = 1; fmt.nSamplesPerSec = 24000;
+        fmt.nAvgBytesPerSec = 48000; fmt.nBlockAlign = 2; fmt.wBitsPerSample = 16;
+        uint rc = waveOutOpen(out dev, 0xFFFFFFFF, ref fmt, IntPtr.Zero, IntPtr.Zero, 0);
+        if (rc != 0) throw new InvalidOperationException("无法打开音频输出设备（错误码 " + rc + "）。");
+        waveOutPause(dev);
+        paused = true;
+    }
+
+    public void Write(byte[] buf, int offset, int count) {
+        int n = count + (hasCarry ? 1 : 0);
+        byte[] data = new byte[n];
+        int p = 0;
+        if (hasCarry) { data[0] = carry; p = 1; hasCarry = false; }
+        Buffer.BlockCopy(buf, offset, data, p, count);
+        if ((n & 1) == 1) { carry = data[n - 1]; hasCarry = true; n--; }
+        if (n == 0) return;
+        Item item = new Item();
+        item.Data = Marshal.AllocHGlobal(n);
+        Marshal.Copy(data, 0, item.Data, n);
+        WAVEHDR h = new WAVEHDR();
+        h.lpData = item.Data; h.dwBufferLength = (uint)n;
+        item.Hdr = Marshal.AllocHGlobal(hdrSize);
+        Marshal.StructureToPtr(h, item.Hdr, false);
+        waveOutPrepareHeader(dev, item.Hdr, (uint)hdrSize);
+        waveOutWrite(dev, item.Hdr, (uint)hdrSize);
+        queue.Add(item);
+        buffered += n; total += n;
+        Reap();
+        if (paused && buffered >= PrebufferBytes) { waveOutRestart(dev); paused = false; }
+    }
+
+    void Reap() {
+        while (queue.Count > 0) {
+            Item item = queue[0];
+            if ((((uint)Marshal.ReadInt32(item.Hdr, flagsOffset)) & WHDR_DONE) == 0) break;
+            Release(item);
+            queue.RemoveAt(0);
+        }
+    }
+
+    void Release(Item item) {
+        waveOutUnprepareHeader(dev, item.Hdr, (uint)hdrSize);
+        Marshal.FreeHGlobal(item.Hdr);
+        Marshal.FreeHGlobal(item.Data);
+    }
+
+    // 等待已提交的音频播完。
+    public void Drain() {
+        if (paused) { waveOutRestart(dev); paused = false; }
+        DateTime deadline = DateTime.UtcNow.AddSeconds(total / 48000.0 + 10);
+        while (queue.Count > 0 && DateTime.UtcNow < deadline) {
+            Reap();
+            Thread.Sleep(20);
+        }
+    }
+
+    public void Dispose() {
+        if (disposed) return;
+        disposed = true;
+        waveOutReset(dev);
+        foreach (Item item in queue) Release(item);
+        queue.Clear();
+        waveOutClose(dev);
+    }
+}
+'@
+    }
+    return New-Object BreezePcmPlayer
+}
+
 function Get-WaveInfo([string]$Path) {
     $reader = [IO.BinaryReader]::new([IO.File]::OpenRead($Path))
     try {

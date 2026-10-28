@@ -98,6 +98,8 @@ if (($userPath -split ';') -notcontains $bin) {
 ```powershell
 tts "你好，欢迎使用本地语音合成。" -p          # 生成到当前目录并播放
 tts "只朗读，不留文件" -s                      # 朗读后不保存任何文件
+tts "边生成边朗读" -s -S                       # 流式：首段音频约 0.1 秒内开口，不留文件
+tts "边生成边播，同时存文件" -S                # 流式播放，并保存 WAV 到当前目录
 tts article.txt -o D:\audio                    # 读取文本文件，指定输出目录
 echo 你好 | tts -n hello                       # 管道输入，指定文件名
 tts "下午好" -i "一位说普通话、语气温暖的成年女性。"
@@ -116,11 +118,12 @@ tts "新句子" -v ref.wav -t "参考音频里的原话"
 | `-P` | `--port` | 服务端口 |
 | `-p` | `--play` | 生成后播放 |
 | `-s` | `--speak` | 只朗读，不保留任何文件（自动播放） |
+| `-S` | `--stream` | 流式：边生成边播放（见“流式生成”）；可与 `-s` 合用，已在播放时 `-p` 不再重复播放 |
 | `-N` | `--no_start` | 服务未运行时不自动启动，直接报错 |
 | `-x` | `--stop` | 停止服务、卸载模型释放显存；单独使用只卸载，与文字一起使用则合成结束后再卸载 |
 | `-h` | `--help` | 显示帮助 |
 
-短参数区分大小写（`-p` 播放、`-P` 端口），不支持 `-sp` 这类合并写法。`tts` 是对 `speak.ps1` 的封装，输出先写入项目内的临时文件再移到目标目录。
+短参数区分大小写（`-p` 播放、`-P` 端口；`-s` 只朗读、`-S` 流式），不支持 `-sp` 这类合并写法。`tts` 是对 `speak.ps1` 的封装，输出先写入项目内的临时文件再移到目标目录。
 
 模型加载进显存后常驻（没有空闲自动卸载），直到执行 `tts -x`（或 `stop-server.ps1`）卸载。
 
@@ -138,9 +141,19 @@ Copy-Item -Recurse skills\speak $HOME\.claude\skills\speak
 
 ## 流式生成
 
+流式模式下服务边生成边返回音频，首段音频约 0.1 秒内到达；离线模式要等整段生成完才返回。三种使用方式：
+
 ```powershell
+# 方式一：全局 tts 命令，加 -S 边生成边播放（服务未运行时自动以流式模式启动）
+tts "你好，这是一段流式生成的语音。" -s -S     # 只朗读，不留文件
+tts "同时保存文件" -S -o D:\audio               # 播放并保存 WAV
+
+# 方式二：speak.ps1 加 -Play 实时播放（同时照常保存 WAV）
 .\stop-server.ps1
 .\start-server.ps1 -Mode streaming
+.\speak.ps1 -Text '你好，这是一段流式生成的语音。' -Output outputs\stream.wav -Play
+
+# 方式三：只保存文件，不播放（去掉 -Play 即可）
 .\speak.ps1 -Text '你好，这是一段流式生成的语音。' -Output outputs\stream.wav
 
 # 切回完整响应模式
@@ -148,7 +161,9 @@ Copy-Item -Recurse skills\speak $HOME\.claude\skills\speak
 .\start-server.ps1 -Mode offline
 ```
 
-每次服务只配置一种模式，切换时明确重启，避免请求时隐式重新加载。客户端自动读取服务模式，连续接收 PCM 后封装成 WAV，并记录首音频到达用时；本脚本保存文件，不提供实时播放器。
+每次服务只配置一种模式，切换时明确重启，避免请求时隐式重新加载：服务已以离线模式运行时，`tts -S` 和 `speak.ps1 -Play` 会报错并提示先停止服务，不会自动重启。流式模式的服务仍可正常使用不带 `-S` 的 `tts` 和 `speak.ps1`，只是不实时播放。
+
+客户端自动读取服务模式，连续接收 PCM 后封装成 WAV，并记录首音频到达用时。实时播放通过 Windows 自带的 winmm 输出，先缓冲约 250 ms 再开始播，不需要安装额外播放器；生成速度必须快于实时（约 1.9 倍实时），否则会有断续。
 
 模型加载约需数十秒。此前相同固定版本在本机预热后，完整生成约 1.92 倍实时、流式中文/英文首音频约 75 / 77 ms，整卡峰值约 5.61 GiB；不包含冷启动，不保证其他文本和机器的速度。
 
@@ -217,7 +232,7 @@ setup.ps1          下载、校验、安装
 start-server.ps1   CUDA 加载与后台启动
 stop-server.ps1    停止服务、卸载显存
 status.ps1         服务与显存状态
-speak.ps1          语音合成、声音描述、参考模仿、流式接收
+speak.ps1          语音合成、声音描述、参考模仿、流式接收与实时播放
 tts.ps1            全局 tts 命令的实现（whisperx 风格参数）
 bin/tts.cmd        tts 命令入口，把 bin 加入 PATH 后可在任意终端使用
 skills/speak/      让 Claude 开口说话的 skill

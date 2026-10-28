@@ -15,6 +15,8 @@
 参考文本：参考音频中实际说出的文字。
 .PARAMETER Stream
 流式：要求服务已使用流式模式启动；通常可自动识别。
+.PARAMETER Play
+实时播放：边接收流式音频边播放，同时照常保存 WAV；要求服务以流式模式启动。
 .PARAMETER Seed
 随机种子，默认 42。
 .PARAMETER MaxTokens
@@ -32,6 +34,7 @@ param(
     [ValidateRange(1, 10000)][int]$MaxTokens = 1500,
     [ValidateRange(1024, 65535)][int]$Port,
     [switch]$Stream,
+    [switch]$Play,
     [string]$VoiceRef,
     [string]$ReferenceText
 )
@@ -47,6 +50,9 @@ if ($state -and $state.port -eq $Port) {
         throw '请先停止服务，再使用 .\start-server.ps1 -Mode streaming 启动服务。'
     }
     $streaming = $state.mode -eq 'streaming'
+}
+if ($Play -and -not $streaming) {
+    throw '实时播放需要流式模式：请先停止服务，再使用 .\start-server.ps1 -Mode streaming 启动服务。'
 }
 if ($TextFile) { $Text = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $TextFile).Path, [Text.Encoding]::UTF8) }
 if ([string]::IsNullOrWhiteSpace($Text)) { throw '输入文本不能为空。' }
@@ -68,7 +74,7 @@ if ($streaming) {
 }
 New-Item -ItemType Directory -Path (Split-Path -Parent $outputPath) -Force | Out-Null
 $partial = $outputPath + '.partial'
-$response = $null; $inputStream = $null; $outputStream = $null
+$response = $null; $inputStream = $null; $outputStream = $null; $player = $null
 $timer = [Diagnostics.Stopwatch]::StartNew()
 $firstAudio = $null
 try {
@@ -86,11 +92,13 @@ try {
     $inputStream = $response.GetResponseStream()
     $outputStream = [IO.File]::Open($partial, [IO.FileMode]::Create, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     if ($streaming) { Write-WaveHeader $outputStream 0 }
+    if ($Play) { $player = New-PcmPlayer }
     $buffer = New-Object byte[] 4096
     $dataBytes = [long]0
     while (($count = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
         if ($null -eq $firstAudio) { $firstAudio = $timer.Elapsed.TotalSeconds }
         $outputStream.Write($buffer, 0, $count)
+        if ($player) { $player.Write($buffer, 0, $count) }
         $dataBytes += $count
     }
     $timer.Stop()
@@ -98,6 +106,8 @@ try {
         if ($dataBytes % 2) { throw '16 位 PCM 音频流的字节数不正确。' }
         Write-WaveHeader $outputStream $dataBytes
     }
+    # 生成结束后等剩余音频播完，请求秒数不含这段等待。
+    if ($player) { $player.Drain() }
     $outputStream.Dispose(); $outputStream = $null
     $info = Get-WaveInfo $partial
     Move-Item -LiteralPath $partial -Destination $outputPath -Force
@@ -123,6 +133,7 @@ try {
     if ($_.Exception -is [Net.WebException]) { throw '无法访问本地语音服务，请先运行 .\start-server.ps1，并检查端口。' }
     throw
 } finally {
+    if ($player) { $player.Dispose() }
     if ($inputStream) { $inputStream.Dispose() }
     if ($outputStream) { $outputStream.Dispose() }
     if ($response) { $response.Dispose() }
