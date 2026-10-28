@@ -49,7 +49,7 @@
 .\start-server.ps1 -ListenAddress 192.168.1.100 -Port 8088
 ```
 
-修改运行中的服务参数前先停止服务。`status.ps1` 和 `speak.ps1` 自动跟随保存的监听地址；监听全部网卡时，本机客户端使用回环地址，远程客户端使用这台电脑的实际 IP。脚本不修改防火墙规则。没有设置系统服务或开机自启，没有修改系统 PATH 或安装全局依赖。
+修改运行中的服务参数前先停止服务。`status.ps1` 和 `speak.ps1` 自动跟随保存的监听地址；监听全部网卡时，本机客户端使用回环地址，远程客户端使用这台电脑的实际 IP。脚本不修改防火墙规则。没有设置系统服务或开机自启，没有安装全局依赖；脚本不会修改系统 PATH，只有你按“全局 tts 命令”一节手动操作时才会添加 `bin` 目录。
 
 ## 生成语音
 
@@ -78,6 +78,57 @@
 输出必须位于本项目内，默认为 `outputs/speech.wav`。每次保存 24 kHz、单声道、16 位 PCM WAV 和同名 JSON，记录请求参数、用时及音频时长。`-Seed` 默认 42，`-MaxTokens` 默认 1500。
 
 `-VoiceRef` 与 `-ReferenceText` 必须同时提供。参考 WAV 只读取，不复制到项目外。模仿效果取决于参考录音质量；自动验证不代替人工评估音色相似度。
+
+## 全局 tts 命令
+
+`bin\tts.cmd` 让你在任意目录、任意终端（cmd、PowerShell、Git Bash、Windows Terminal）直接运行 `tts`，参数风格参考 whisperx。服务未运行时会自动启动并加载模型。
+
+把 `bin` 目录加入用户 PATH（只需一次，之后新开的终端生效；请把路径换成实际位置）：
+
+```powershell
+[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';D:\path\to\breeze-tts-2\bin', 'User')
+```
+
+```powershell
+tts "你好，欢迎使用本地语音合成。" -p          # 生成到当前目录并播放
+tts "只朗读，不留文件" -s                      # 朗读后不保存任何文件
+tts article.txt -o D:\audio                    # 读取文本文件，指定输出目录
+echo 你好 | tts -n hello                       # 管道输入，指定文件名
+tts "下午好" -i "一位说普通话、语气温暖的成年女性。"
+tts "新句子" -v ref.wav -t "参考音频里的原话"
+```
+
+| 短 | 长 | 说明 |
+| --- | --- | --- |
+| `-o` | `--output_dir` | 输出目录，默认当前目录 |
+| `-n` | `--output_name` | 输出文件名（不含扩展名），仅单个输入时有效 |
+| `-i` | `--instruct` | 声音描述（音色、语气、风格） |
+| `-v` | `--voice_ref` | 参考音频，需同时提供 `-t` |
+| `-t` | `--reference_text` | 参考音频中实际说出的文字 |
+| `-e` | `--seed` | 随机种子，默认 42 |
+| `-m` | `--max_tokens` | 最大声学帧数，默认 1500 |
+| `-P` | `--port` | 服务端口 |
+| `-p` | `--play` | 生成后播放 |
+| `-s` | `--speak` | 只朗读，不保留任何文件（自动播放） |
+| `-N` | `--no_start` | 服务未运行时不自动启动，直接报错 |
+| `-x` | `--stop` | 合成结束后停止服务，释放显存 |
+| `-h` | `--help` | 显示帮助 |
+
+短参数区分大小写（`-p` 播放、`-P` 端口），不支持 `-sp` 这类合并写法。`tts` 是对 `speak.ps1` 的封装，输出先写入项目内的临时文件再移到目标目录。
+
+模型加载进显存后常驻（没有空闲自动卸载），直到执行 `stop-server.ps1` 或 `tts -x`。
+
+## 让 AI 开口说话（Claude skill）
+
+`skills\speak\SKILL.md` 是一个 Claude Code skill，装上后 Claude 可以在你要求“读给我听”“做完叫我一声”时调用 `tts -s` 开口说话，并按场合（完成、出错、提醒、讲解等）用 `-i` 调整语气。
+
+安装：先完成上面的 `tts` 全局命令配置，再把 skill 复制到 Claude Code 的用户级技能目录，然后重启 Claude Code：
+
+```powershell
+Copy-Item -Recurse skills\speak $HOME\.claude\skills\speak
+```
+
+安装后可输入 `/speak` 手动调用，也可以直接说“念给我听”让 Claude 自动调用。`SKILL.md` 中的 `<项目目录>` 是占位符，只在备用调用和停止服务时用到，请改成本项目的实际路径。
 
 ## 流式生成
 
@@ -161,6 +212,9 @@ start-server.ps1   CUDA 加载与后台启动
 stop-server.ps1    停止服务、卸载显存
 status.ps1         服务与显存状态
 speak.ps1          语音合成、声音描述、参考模仿、流式接收
+tts.ps1            全局 tts 命令的实现（whisperx 风格参数）
+bin/tts.cmd        tts 命令入口，把 bin 加入 PATH 后可在任意终端使用
+skills/speak/      让 Claude 开口说话的 skill
 verify.ps1         完整验证，结束后删除测试音频
 cleanup.ps1        缓存清理与卸载
 common.ps1         共享辅助函数
