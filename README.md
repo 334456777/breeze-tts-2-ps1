@@ -83,11 +83,17 @@
 
 `bin\tts.cmd` 让你在任意目录、任意终端（cmd、PowerShell、Git Bash、Windows Terminal）直接运行 `tts`，参数风格参考 whisperx。服务未运行时会自动启动并加载模型。
 
-把 `bin` 目录加入用户 PATH（只需一次，之后新开的终端生效；请把路径换成实际位置）：
+在本项目目录中打开 PowerShell，把 `bin` 目录加入用户 PATH（只需一次，之后新开的终端生效）：
 
 ```powershell
-[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';D:\path\to\breeze-tts-2\bin', 'User')
+$bin = Join-Path $PWD 'bin'
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if (($userPath -split ';') -notcontains $bin) {
+    [Environment]::SetEnvironmentVariable('Path', $userPath.TrimEnd(';') + ';' + $bin, 'User')
+}
 ```
+
+重复执行不会重复添加。移动项目文件夹后需要重新执行，并删掉旧的 PATH 条目。
 
 ```powershell
 tts "你好，欢迎使用本地语音合成。" -p          # 生成到当前目录并播放
